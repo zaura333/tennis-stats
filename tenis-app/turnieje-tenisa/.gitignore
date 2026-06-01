@@ -1,0 +1,13 @@
+/vendor/
+/node_modules/
+/public/build/
+/public/hot/
+/storage/*.key
+.env
+.env.*
+!.env.example
+*.phar
+*.log
+/bootstrap/cache/*.php
+Thumbs.db
+.DS_Store
