@@ -1,8 +1,8 @@
 # Specyfikacja projektu — archiwum turniejów tenisowych
 
-Projekt składa się z aplikacji webowej w Laravelu 13 (PHP 8.3, Blade, Tailwind z CDN) oraz bazy MariaDB/MySQL zdefiniowanej wcześniej w pliku `turnieje_tenisa_ddl.sql`. Aplikacja nie zmienia schematu bazy przez migracje Laravel — modele łączą się z istniejącymi tabelami o nazwach z DDL (np. TURNIEJ, ZAWODNIK).
+Projekt składa się z aplikacji webowej w Laravelu 13 (PHP 8.3, Blade, Tailwind z CDN) oraz bazy MariaDB/MySQL zdefiniowanej wcześniej w pliku `turnieje_tenisa_ddl.sql`.
 
-## Po co jest aplikacja
+## Opis
 
 Użytkownik może przeglądać turnieje i ich edycje roczne, dodawać nowe turnieje i edycje, przypisywać zawodników (z bazy albo nowych przy zapisie edycji), wpisywać mecze z wynikami setów oraz otwierać profile zawodników z listą startów. Ograniczenia z bazy (CHECK, słowniki, klucze obce) pozostają po stronie SQL z etapu projektowania bazy.
 
@@ -66,16 +66,10 @@ Nie ma edycji ani usuwania istniejących rekordów — tylko dodawanie i podglą
 
 ## Podział prac na cztery osoby
 
-Założenie: każda osoba trzyma jedną warstwę lub jeden moduł widoków; dogadujecie nazwy tras, zmiennych w widokach i relacji w modelach.
+Jakub Tkaczyk — modele i seedery. Wszystkie pliki w app/Models: słowniki Kraj, Plec, Status, RodzajMeczu; Turniej i EdycjaTurnieju; Zawodnik i Udzial; Mecz, SetMeczu, Gem. Dodatkowo KrajSeeder i wpis w DatabaseSeeder. Od tej osoby zależą nazwy relacji typu stronaA, pelne_nazwisko, których używają kontrolery i widoki.
 
-Osoba 1 — modele i seedery. Wszystkie pliki w app/Models: słowniki Kraj, Plec, Status, RodzajMeczu; Turniej i EdycjaTurnieju; Zawodnik i Udzial; Mecz, SetMeczu, Gem. Dodatkowo KrajSeeder i wpis w DatabaseSeeder. Od tej osoby zależą nazwy relacji typu stronaA, pelne_nazwisko, których używają kontrolery i widoki.
+Adrian Stuglik — kontrolery i routing. TurniejController, EdycjaController, ZawodnikController, MeczController oraz cały routes/web.php. Logika walidacji, transakcji przy zapisie edycji i meczu, przekierowania z komunikatami. Może też ogarnąć .env pod MySQL i krótką instrukcję uruchomienia.
 
-Osoba 2 — kontrolery i routing. TurniejController, EdycjaController, ZawodnikController, MeczController oraz cały routes/web.php. Logika walidacji, transakcji przy zapisie edycji i meczu, przekierowania z komunikatami. Może też ogarnąć .env pod MySQL i krótką instrukcję uruchomienia.
+Laura Wrońska — widoki turniejów i edycji oraz layout. layouts/app.blade.php i pliki turnieje/*.blade.php oraz edycje/*.blade.php, w tym JavaScript w edycje/create do dodawania uczestników. Korzysta z tras i zmiennych z kontrolerów oraz z metod kolorów nawierzchni z modelu Turniej.
 
-Osoba 3 — widoki turniejów i edycji oraz layout. layouts/app.blade.php i pliki turnieje/*.blade.php oraz edycje/*.blade.php, w tym JavaScript w edycje/create do dodawania uczestników. Korzysta z tras i zmiennych z kontrolerów oraz z metod kolorów nawierzchni z modelu Turniej.
-
-Osoba 4 — widoki zawodników i meczów oraz dane SQL. zawodnicy/*.blade.php, mecze/*.blade.php, ewentualnie styl paginacji po vendor:publish. Plik turnieje_tenisa_dane.sql w katalogu nadrzędnym — dane do pokazania projektu na zajęciach. Formularz meczu musi wysyłać pola zgodne z MeczController (strona_a, strona_b, sety).
-
-Schemat DDL z wcześniejszego etapu zwykle robiła osoba lub osoby od bazy wspólnie, poza tym podziałem na cztery role w Laravelu. Katalogi vendor, bootstrap i public to standard frameworka, nie przypisujemy ich jednej osobie z zespołu aplikacji.
-
-Podsumowując: osoba 1 — warstwa danych w PHP; osoba 2 — logika HTTP i zapisu; osoba 3 — szkielet strony i moduł turniej → edycja; osoba 4 — zawodnicy, mecze i plik z przykładowymi danymi SQL.
+Natalia Topinek — widoki zawodników i meczów oraz dane SQL. zawodnicy/*.blade.php, mecze/*.blade.php, ewentualnie styl paginacji po vendor:publish. Plik turnieje_tenisa_dane.sql w katalogu nadrzędnym — dane do pokazania projektu na zajęciach. Formularz meczu musi wysyłać pola zgodne z MeczController (strona_a, strona_b, sety).
