@@ -1,0 +1,1051 @@
+-- =============================================================================
+-- TURNIEJE_TENISA – Skrypt pełny
+-- Zawiera baza + tabele + ograniczenia + triggery + dane przykładowe
+-- Silnik: MariaDB 10.4 / InnoDB  |  Kodowanie: utf8mb4
+--
+-- Kolejność wykonania:
+--   1. Tworzy bazę danych i tabele (DDL)
+--   2. Instaluje triggery walidacyjne
+--   3. Wstawia dane przykładowe (2 turnieje, 13 zawodników, 21 meczów, 75 setów)
+--
+-- Skrypt jest idempotentny.
+-- =============================================================================
+
+SET NAMES utf8mb4;
+
+CREATE DATABASE IF NOT EXISTS turnieje_tenisa
+    CHARACTER SET utf8mb4
+    COLLATE utf8mb4_polish_ci;
+
+USE turnieje_tenisa;
+
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- -----------------------------------------------------------------------------
+-- Usunięcie tabel (odwrotna kolejność FK)
+-- -----------------------------------------------------------------------------
+DROP TABLE IF EXISTS GEM;
+DROP TABLE IF EXISTS SET_MECZU;
+DROP TABLE IF EXISTS MECZ_UDZIAL;
+DROP TABLE IF EXISTS MECZ;
+DROP TABLE IF EXISTS UDZIAL;
+DROP TABLE IF EXISTS STATUS;
+DROP TABLE IF EXISTS ZAWODNIK;
+DROP TABLE IF EXISTS PLEC;
+DROP TABLE IF EXISTS EDYCJA_TURNIEJU;
+DROP TABLE IF EXISTS TURNIEJ;
+DROP TABLE IF EXISTS KRAJ;
+DROP TABLE IF EXISTS RODZAJ_MECZU;
+
+-- =============================================================================
+-- TABELE SŁOWNIKOWE
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- KRAJ
+-- -----------------------------------------------------------------------------
+CREATE TABLE KRAJ (
+    Kod_ISO   CHAR(3)      NOT NULL,
+    Nazwa     VARCHAR(100) NOT NULL,
+    Kontynent VARCHAR(50)  NOT NULL,
+
+    CONSTRAINT PK_KRAJ PRIMARY KEY (Kod_ISO),
+    CONSTRAINT CHK_KRAJ_Kontynent CHECK (
+        Kontynent IN ('Afryka','Ameryka Północna','Ameryka Południowa',
+                      'Azja','Australia i Oceania','Europa')
+    )
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_polish_ci
+  COMMENT='Kraje uczestniczące w turniejach – ISO 3166-1 alpha-3';
+
+-- -----------------------------------------------------------------------------
+-- PLEC
+-- Alternatywą byłby ENUM bezpośrednio w ZAWODNIK.
+-- -----------------------------------------------------------------------------
+CREATE TABLE PLEC (
+    Nazwa VARCHAR(20) NOT NULL,
+
+    CONSTRAINT PK_PLEC PRIMARY KEY (Nazwa)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_polish_ci
+  COMMENT='Słownik płci zawodników';
+
+-- -----------------------------------------------------------------------------
+-- STATUS (uczestnictwa w turnieju)
+-- -----------------------------------------------------------------------------
+CREATE TABLE STATUS (
+    Status VARCHAR(30) NOT NULL,
+
+    CONSTRAINT PK_STATUS PRIMARY KEY (Status)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_polish_ci
+  COMMENT='Słownik statusów udziału (np. Główna drabinka, Kwalifikacje, Dzika karta)';
+
+-- -----------------------------------------------------------------------------
+-- RODZAJ_MECZU
+-- -----------------------------------------------------------------------------
+CREATE TABLE RODZAJ_MECZU (
+    ID_Rodzaju          INT          NOT NULL AUTO_INCREMENT,
+    Nazwa               VARCHAR(50)  NOT NULL,
+    Sety_do_wygrania    INT          NOT NULL,
+    Zawodnikow_na_strone INT         NOT NULL,
+
+    CONSTRAINT PK_RODZAJ_MECZU PRIMARY KEY (ID_Rodzaju),
+    CONSTRAINT CHK_RODZAJ_Sety CHECK (Sety_do_wygrania IN (2, 3)),
+    CONSTRAINT CHK_RODZAJ_Zawodnicy CHECK (Zawodnikow_na_strone IN (1, 2))
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_polish_ci
+  COMMENT='Rodzaje meczu: singiel bo3, singiel bo5, debel bo3 itd.';
+
+-- =============================================================================
+-- TURNIEJE
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- TURNIEJ
+-- -----------------------------------------------------------------------------
+CREATE TABLE TURNIEJ (
+    ID_Turnieju  INT          NOT NULL AUTO_INCREMENT,
+    Kod_ISO      CHAR(3)      NOT NULL  COMMENT 'Kraj organizatora',
+    Nazwa        VARCHAR(100) NOT NULL,
+    Miasto       VARCHAR(100) NOT NULL,
+    Nawierzchnia ENUM('Twarda','Twarda (hala)','Ziemna','Trawa','Dywan') NOT NULL,
+
+    CONSTRAINT PK_TURNIEJ  PRIMARY KEY (ID_Turnieju),
+    CONSTRAINT FK_TURNIEJ_KRAJ FOREIGN KEY (Kod_ISO)
+        REFERENCES KRAJ (Kod_ISO)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_polish_ci
+  COMMENT='Turnieje tenisowe (stałe cechy, niezależne od edycji)';
+
+-- -----------------------------------------------------------------------------
+-- EDYCJA_TURNIEJU
+-- UNIQUE(ID_Turnieju, Rok) – jeden turniej, jedna edycja rocznie.
+-- CHECK Data_zakonczenia >= Data_rozpoczecia.
+-- -----------------------------------------------------------------------------
+CREATE TABLE EDYCJA_TURNIEJU (
+    ID_Edycji         INT  NOT NULL AUTO_INCREMENT,
+    ID_Turnieju       INT  NOT NULL,
+    Rok               INT  NOT NULL,
+    Data_rozpoczecia  DATE NOT NULL,
+    Data_zakonczenia  DATE NOT NULL,
+
+    CONSTRAINT PK_EDYCJA_TURNIEJU PRIMARY KEY (ID_Edycji),
+    CONSTRAINT UQ_EDYCJA_TURNIEJU_ROK UNIQUE (ID_Turnieju, Rok),
+    CONSTRAINT FK_EDYCJA_TURNIEJ FOREIGN KEY (ID_Turnieju)
+        REFERENCES TURNIEJ (ID_Turnieju)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT CHK_EDYCJA_Daty CHECK (Data_zakonczenia >= Data_rozpoczecia),
+    CONSTRAINT CHK_EDYCJA_Rok  CHECK (Rok BETWEEN 1877 AND 2100)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_polish_ci
+  COMMENT='Edycja roczna turnieju';
+
+-- =============================================================================
+-- ZAWODNICY
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- ZAWODNIK
+-- -----------------------------------------------------------------------------
+CREATE TABLE ZAWODNIK (
+    Nr_Licencji_ITF  VARCHAR(20)  NOT NULL,
+    Plec             VARCHAR(20)  NOT NULL,
+    Kod_ISO          CHAR(3)      NOT NULL  COMMENT 'Reprezentowany kraj',
+    Imie             VARCHAR(50)  NOT NULL,
+    Nazwisko         VARCHAR(50)  NOT NULL,
+    Data_urodzenia   DATE         NOT NULL,
+
+    CONSTRAINT PK_ZAWODNIK PRIMARY KEY (Nr_Licencji_ITF),
+    CONSTRAINT FK_ZAWODNIK_PLEC FOREIGN KEY (Plec)
+        REFERENCES PLEC (Nazwa)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT FK_ZAWODNIK_KRAJ FOREIGN KEY (Kod_ISO)
+        REFERENCES KRAJ (Kod_ISO)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_polish_ci
+  COMMENT='Zawodnik tenisowy – klucz główny: numer licencji ITF';
+
+-- -----------------------------------------------------------------------------
+-- UDZIAL
+-- UNIQUE(Nr_Licencji_ITF, ID_Edycji) – zawodnik raz na edycję.
+-- CHECK Rozstawienie > 0.
+-- CHECK Ranking_w_momencie_rejestracji > 0.
+-- -----------------------------------------------------------------------------
+CREATE TABLE UDZIAL (
+    ID_Udzialu                    INT          NOT NULL AUTO_INCREMENT,
+    Nr_Licencji_ITF               VARCHAR(20)  NOT NULL,
+    ID_Edycji                     INT          NOT NULL,
+    Status                        VARCHAR(30)  NOT NULL,
+    Rozstawienie                  INT          NOT NULL,
+    Ranking_w_momencie_rejestracji INT         NOT NULL,
+    Data_rejestracji              DATE         NOT NULL,
+
+    CONSTRAINT PK_UDZIAL PRIMARY KEY (ID_Udzialu),
+    CONSTRAINT UQ_UDZIAL_ZAWODNIK_EDYCJA UNIQUE (Nr_Licencji_ITF, ID_Edycji),
+    CONSTRAINT FK_UDZIAL_ZAWODNIK FOREIGN KEY (Nr_Licencji_ITF)
+        REFERENCES ZAWODNIK (Nr_Licencji_ITF)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT FK_UDZIAL_EDYCJA FOREIGN KEY (ID_Edycji)
+        REFERENCES EDYCJA_TURNIEJU (ID_Edycji)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT FK_UDZIAL_STATUS FOREIGN KEY (Status)
+        REFERENCES STATUS (Status)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT CHK_UDZIAL_Rozstawienie CHECK (Rozstawienie > 0),
+    CONSTRAINT CHK_UDZIAL_Ranking      CHECK (Ranking_w_momencie_rejestracji > 0)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_polish_ci
+  COMMENT='Udział zawodnika w edycji turnieju';
+
+-- =============================================================================
+-- MECZE
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- MECZ
+-- Zwycięska_strona – CHECK (NULL dozwolony dla meczu niezakończonego).
+-- Zwycięska_strona jest redundantna (da się wyliczyć z SET_MECZU),
+--   zachowana świadomie dla wydajności zapytań.
+-- -----------------------------------------------------------------------------
+CREATE TABLE MECZ (
+    ID_Meczu           INT          NOT NULL AUTO_INCREMENT,
+    ID_Edycji          INT          NOT NULL,
+    ID_Rodzaju         INT          NOT NULL,
+    Runda              ENUM('Kwalifikacje R1','Kwalifikacje R2','Kwalifikacje R3',
+                           '1. runda','2. runda','3. runda','4. runda',
+                           '1/8 finału','Ćwierćfinał','Półfinał','Finał') NOT NULL,
+    Data               DATE         NOT NULL,
+    Kort               VARCHAR(50)  NOT NULL,
+    Czas_trwania_min   INT          NULL      COMMENT 'NULL gdy mecz nie dobiegł końca',
+    Zwycięska_strona   CHAR(1)      NULL      COMMENT 'A lub B; NULL gdy mecz w toku lub walkower',
+
+    CONSTRAINT PK_MECZ PRIMARY KEY (ID_Meczu),
+    CONSTRAINT FK_MECZ_EDYCJA FOREIGN KEY (ID_Edycji)
+        REFERENCES EDYCJA_TURNIEJU (ID_Edycji)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT FK_MECZ_RODZAJ FOREIGN KEY (ID_Rodzaju)
+        REFERENCES RODZAJ_MECZU (ID_Rodzaju)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT CHK_MECZ_Strona CHECK (Zwycięska_strona IS NULL OR Zwycięska_strona IN ('A','B')),
+    CONSTRAINT CHK_MECZ_Czas   CHECK (Czas_trwania_min IS NULL OR Czas_trwania_min > 0)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_polish_ci
+  COMMENT='Mecz w ramach edycji turnieju';
+
+-- -----------------------------------------------------------------------------
+-- MECZ_UDZIAL  (tabela asocjacyjna Mecz <-> Udział)
+-- Liczba wierszy na mecz musi wynosić 2 (singiel) lub 4 (debel).
+-- Ograniczenie to egzekwuje trigger TRG_MECZ_UDZIAL_LICZBA_STRON.
+-- -----------------------------------------------------------------------------
+CREATE TABLE MECZ_UDZIAL (
+    ID_Meczu   INT    NOT NULL,
+    ID_Udzialu INT    NOT NULL,
+    Strona     CHAR(1) NOT NULL,
+
+    CONSTRAINT PK_MECZ_UDZIAL PRIMARY KEY (ID_Meczu, ID_Udzialu),
+    CONSTRAINT FK_MECZ_UDZIAL_MECZ FOREIGN KEY (ID_Meczu)
+        REFERENCES MECZ (ID_Meczu)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+    CONSTRAINT FK_MECZ_UDZIAL_UDZIAL FOREIGN KEY (ID_Udzialu)
+        REFERENCES UDZIAL (ID_Udzialu)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT CHK_MECZ_UDZIAL_Strona CHECK (Strona IN ('A','B'))
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_polish_ci
+  COMMENT='Powiązanie meczu z udziałami (2 lub 4 wiersze na mecz)';
+
+-- =============================================================================
+-- STRUKTURA MECZU
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- SET_MECZU  
+-- nazwa SET jest z modelu relacyjnego jest słowem kluczowym SQL
+-- używamy SET_MECZU
+-- -----------------------------------------------------------------------------
+CREATE TABLE SET_MECZU (
+    ID_Setu    INT     NOT NULL AUTO_INCREMENT,
+    ID_Meczu   INT     NOT NULL,
+    Numer_setu INT     NOT NULL,
+    Wynik_A    INT     NULL     COMMENT 'NULL gdy set w toku',
+    Wynik_B    INT     NULL     COMMENT 'NULL gdy set w toku',
+    Tie_break  BOOLEAN NOT NULL DEFAULT FALSE,
+
+    CONSTRAINT PK_SET_MECZU PRIMARY KEY (ID_Setu),
+    CONSTRAINT UQ_SET_NUMER  UNIQUE (ID_Meczu, Numer_setu),
+    CONSTRAINT FK_SET_MECZU  FOREIGN KEY (ID_Meczu)
+        REFERENCES MECZ (ID_Meczu)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+    CONSTRAINT CHK_SET_Wynik_A CHECK (Wynik_A IS NULL OR Wynik_A >= 0),
+    CONSTRAINT CHK_SET_Wynik_B CHECK (Wynik_B IS NULL OR Wynik_B >= 0),
+    CONSTRAINT CHK_SET_Numer   CHECK (Numer_setu BETWEEN 1 AND 5)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_polish_ci
+  COMMENT='Sety w meczu (nazwa SET_MECZU – SET jest słowem kluczowym SQL)';
+
+-- -----------------------------------------------------------------------------
+-- GEM
+-- -----------------------------------------------------------------------------
+CREATE TABLE GEM (
+    ID_Gemu    INT     NOT NULL AUTO_INCREMENT,
+    ID_Setu    INT     NOT NULL,
+    Numer_gemu INT     NOT NULL,
+    Serwujacy  CHAR(1) NOT NULL,
+    Punkty_A   INT     NULL     COMMENT 'NULL gdy gem w toku',
+    Punkty_B   INT     NULL     COMMENT 'NULL gdy gem w toku',
+
+    CONSTRAINT PK_GEM     PRIMARY KEY (ID_Gemu),
+    CONSTRAINT UQ_GEM_NUMER UNIQUE (ID_Setu, Numer_gemu),
+    CONSTRAINT FK_GEM_SET FOREIGN KEY (ID_Setu)
+        REFERENCES SET_MECZU (ID_Setu)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+    CONSTRAINT CHK_GEM_Serwujacy CHECK (Serwujacy IN ('A','B')),
+    CONSTRAINT CHK_GEM_Punkty_A  CHECK (Punkty_A IS NULL OR Punkty_A >= 0),
+    CONSTRAINT CHK_GEM_Punkty_B  CHECK (Punkty_B IS NULL OR Punkty_B >= 0),
+    CONSTRAINT CHK_GEM_Numer     CHECK (Numer_gemu >= 1)
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_polish_ci
+  COMMENT='Gemy w secie';
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+-- =============================================================================
+-- Dane słownikowe
+-- =============================================================================
+
+INSERT INTO PLEC (Nazwa) VALUES
+    ('Mężczyzna'),
+    ('Kobieta'),
+    ('Inna');
+
+INSERT INTO STATUS (Status) VALUES
+    ('Główna drabinka'),
+    ('Kwalifikacje'),
+    ('Dzika karta'),
+    ('Lucky Loser'),
+    ('Wycofał się');
+
+INSERT INTO RODZAJ_MECZU (Nazwa, Sety_do_wygrania, Zawodnikow_na_strone) VALUES
+    ('Singiel BO3', 2, 1),
+    ('Singiel BO5', 3, 1),
+    ('Debel BO3',   2, 2),
+    ('Debel BO5',   3, 2),
+    ('Mikst BO3',   2, 2);
+
+-- =============================================================================
+-- TURNIEJE_TENISA – Skrypt triggerów
+-- Silnik: MariaDB 10.4 / InnoDB
+-- Wykonujemy po turnieje_tenisa_ddl.sql
+-- =============================================================================
+
+DELIMITER $$
+
+-- =============================================================================
+-- TRG_EDYCJA_DATA_ROK
+-- Walidacja: rok w Rok musi być zgodny z rokiem w Data_rozpoczecia.
+-- Zapobiega rozbieżności np. Rok=2024 przy Data_rozpoczecia='2025-01-15'.
+-- =============================================================================
+DROP TRIGGER IF EXISTS TRG_EDYCJA_INSERT_DATA_ROK $$
+CREATE TRIGGER TRG_EDYCJA_INSERT_DATA_ROK
+BEFORE INSERT ON EDYCJA_TURNIEJU
+FOR EACH ROW
+BEGIN
+    IF YEAR(NEW.Data_rozpoczecia) <> NEW.Rok THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Rok musi być zgodny z rokiem Data_rozpoczecia.';
+    END IF;
+END$$
+
+DROP TRIGGER IF EXISTS TRG_EDYCJA_UPDATE_DATA_ROK $$
+CREATE TRIGGER TRG_EDYCJA_UPDATE_DATA_ROK
+BEFORE UPDATE ON EDYCJA_TURNIEJU
+FOR EACH ROW
+BEGIN
+    IF YEAR(NEW.Data_rozpoczecia) <> NEW.Rok THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Rok musi być zgodny z rokiem Data_rozpoczecia.';
+    END IF;
+END$$
+
+-- =============================================================================
+-- TRG_MECZ_DATA_W_EDYCJI
+-- Walidacja: data meczu musi mieścić się w przedziale edycji turnieju.
+-- =============================================================================
+DROP TRIGGER IF EXISTS TRG_MECZ_INSERT_DATA $$
+CREATE TRIGGER TRG_MECZ_INSERT_DATA
+BEFORE INSERT ON MECZ
+FOR EACH ROW
+BEGIN
+    DECLARE v_start DATE;
+    DECLARE v_end   DATE;
+
+    SELECT Data_rozpoczecia, Data_zakonczenia
+      INTO v_start, v_end
+      FROM EDYCJA_TURNIEJU
+     WHERE ID_Edycji = NEW.ID_Edycji;
+
+    IF NEW.Data < v_start OR NEW.Data > v_end THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Data meczu musi mieścić się w przedziale edycji turnieju.';
+    END IF;
+END$$
+
+DROP TRIGGER IF EXISTS TRG_MECZ_UPDATE_DATA $$
+CREATE TRIGGER TRG_MECZ_UPDATE_DATA
+BEFORE UPDATE ON MECZ
+FOR EACH ROW
+BEGIN
+    DECLARE v_start DATE;
+    DECLARE v_end   DATE;
+
+    SELECT Data_rozpoczecia, Data_zakonczenia
+      INTO v_start, v_end
+      FROM EDYCJA_TURNIEJU
+     WHERE ID_Edycji = NEW.ID_Edycji;
+
+    IF NEW.Data < v_start OR NEW.Data > v_end THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Data meczu musi mieścić się w przedziale edycji turnieju.';
+    END IF;
+END$$
+
+-- =============================================================================
+-- TRG_MECZ_UDZIAL_STRONA
+-- Walidacja: do meczu można przypisać tylko 2 strony (A i B).
+-- Każda strona może mieć 1 udział (singiel) lub 2 (debel) –
+-- spójność ze zdefiniowanym RODZAJ_MECZU egzekwuje trigger poniżej.
+-- nie może być więcej niż 2 różnych wartości Strona dla danego meczu.
+-- =============================================================================
+DROP TRIGGER IF EXISTS TRG_MECZ_UDZIAL_INSERT_STRONA $$
+CREATE TRIGGER TRG_MECZ_UDZIAL_INSERT_STRONA
+BEFORE INSERT ON MECZ_UDZIAL
+FOR EACH ROW
+BEGIN
+    DECLARE v_ile_stron INT;
+
+    SELECT COUNT(DISTINCT Strona)
+      INTO v_ile_stron
+      FROM MECZ_UDZIAL
+     WHERE ID_Meczu = NEW.ID_Meczu;
+
+    -- Jeśli już są 2 strony i nowa jest inną wartością – błąd
+    IF v_ile_stron = 2 AND NEW.Strona NOT IN (
+        SELECT DISTINCT Strona FROM MECZ_UDZIAL WHERE ID_Meczu = NEW.ID_Meczu
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Mecz może mieć tylko dwie strony: A i B.';
+    END IF;
+END$$
+
+-- =============================================================================
+-- TRG_MECZ_UDZIAL_LICZBA_ZAWODNIKOW
+-- Walidacja: liczba udziałów na stronę musi odpowiadać Zawodnikow_na_strone
+--   z tabeli RODZAJ_MECZU powiązanego z meczem.
+-- =============================================================================
+DROP TRIGGER IF EXISTS TRG_MECZ_UDZIAL_INSERT_LICZBA $$
+CREATE TRIGGER TRG_MECZ_UDZIAL_INSERT_LICZBA
+AFTER INSERT ON MECZ_UDZIAL
+FOR EACH ROW
+BEGIN
+    DECLARE v_wymagani  INT;
+    DECLARE v_faktyczni INT;
+    DECLARE v_msg       VARCHAR(200);
+
+    -- Pobierz wymaganą liczbę zawodników na stronę
+    SELECT rm.Zawodnikow_na_strone
+      INTO v_wymagani
+      FROM MECZ m
+      JOIN RODZAJ_MECZU rm ON rm.ID_Rodzaju = m.ID_Rodzaju
+     WHERE m.ID_Meczu = NEW.ID_Meczu;
+
+    -- Policz faktycznych dla tej strony
+    SELECT COUNT(*)
+      INTO v_faktyczni
+      FROM MECZ_UDZIAL
+     WHERE ID_Meczu = NEW.ID_Meczu
+       AND Strona   = NEW.Strona;
+
+    IF v_faktyczni > v_wymagani THEN
+        SET v_msg = CONCAT(
+            'Przekroczono liczbę zawodników na stronę. Wymagana: ',
+            v_wymagani, ', aktualna: ', v_faktyczni, '.'
+        );
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_msg;
+    END IF;
+END$$
+
+-- =============================================================================
+-- TRG_UDZIAL_REJESTRACJA_PO_NARODZINACH
+-- Walidacja: data rejestracji nie może być wcześniejsza niż urodziny zawodnika.
+-- =============================================================================
+DROP TRIGGER IF EXISTS TRG_UDZIAL_INSERT_WIEK $$
+CREATE TRIGGER TRG_UDZIAL_INSERT_WIEK
+BEFORE INSERT ON UDZIAL
+FOR EACH ROW
+BEGIN
+    DECLARE v_urodziny DATE;
+
+    SELECT Data_urodzenia INTO v_urodziny
+      FROM ZAWODNIK
+     WHERE Nr_Licencji_ITF = NEW.Nr_Licencji_ITF;
+
+    IF NEW.Data_rejestracji < v_urodziny THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Data rejestracji nie może być wcześniejsza niż data urodzenia zawodnika.';
+    END IF;
+END$$
+
+DROP TRIGGER IF EXISTS TRG_UDZIAL_UPDATE_WIEK $$
+CREATE TRIGGER TRG_UDZIAL_UPDATE_WIEK
+BEFORE UPDATE ON UDZIAL
+FOR EACH ROW
+BEGIN
+    DECLARE v_urodziny DATE;
+
+    SELECT Data_urodzenia INTO v_urodziny
+      FROM ZAWODNIK
+     WHERE Nr_Licencji_ITF = NEW.Nr_Licencji_ITF;
+
+    IF NEW.Data_rejestracji < v_urodziny THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Data rejestracji nie może być wcześniejsza niż data urodzenia zawodnika.';
+    END IF;
+END$$
+
+-- =============================================================================
+-- TRG_UDZIAL_EDYCJA_ZGODNOSC
+-- Walidacja: data rejestracji nie może być późniejsza niż zakończenie edycji,
+-- do której się rejestrujemy.
+-- =============================================================================
+DROP TRIGGER IF EXISTS TRG_UDZIAL_INSERT_EDYCJA $$
+CREATE TRIGGER TRG_UDZIAL_INSERT_EDYCJA
+BEFORE INSERT ON UDZIAL
+FOR EACH ROW
+BEGIN
+    DECLARE v_koniec DATE;
+
+    SELECT Data_zakonczenia INTO v_koniec
+      FROM EDYCJA_TURNIEJU
+     WHERE ID_Edycji = NEW.ID_Edycji;
+
+    IF NEW.Data_rejestracji > v_koniec THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Data rejestracji nie może być późniejsza niż zakończenie edycji turnieju.';
+    END IF;
+END$$
+
+DROP TRIGGER IF EXISTS TRG_UDZIAL_UPDATE_EDYCJA $$
+CREATE TRIGGER TRG_UDZIAL_UPDATE_EDYCJA
+BEFORE UPDATE ON UDZIAL
+FOR EACH ROW
+BEGIN
+    DECLARE v_koniec DATE;
+
+    SELECT Data_zakonczenia INTO v_koniec
+      FROM EDYCJA_TURNIEJU
+     WHERE ID_Edycji = NEW.ID_Edycji;
+
+    IF NEW.Data_rejestracji > v_koniec THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Data rejestracji nie może być późniejsza niż zakończenie edycji turnieju.';
+    END IF;
+END$$
+
+-- =============================================================================
+-- TRG_ZAWODNIK_URODZINY
+-- Walidacja: data urodzenia nie może być w przyszłości.
+-- (CHECK z CURDATE() nie jest obsługiwany w MariaDB 10.4)
+-- =============================================================================
+DROP TRIGGER IF EXISTS TRG_ZAWODNIK_INSERT_URODZINY $$
+CREATE TRIGGER TRG_ZAWODNIK_INSERT_URODZINY
+BEFORE INSERT ON ZAWODNIK
+FOR EACH ROW
+BEGIN
+    IF NEW.Data_urodzenia > CURDATE() THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Data urodzenia nie może być w przyszłości.';
+    END IF;
+END$$
+
+DROP TRIGGER IF EXISTS TRG_ZAWODNIK_UPDATE_URODZINY $$
+CREATE TRIGGER TRG_ZAWODNIK_UPDATE_URODZINY
+BEFORE UPDATE ON ZAWODNIK
+FOR EACH ROW
+BEGIN
+    IF NEW.Data_urodzenia > CURDATE() THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Data urodzenia nie może być w przyszłości.';
+    END IF;
+END$$
+
+DELIMITER ;
+
+-- =============================================================================
+-- DANE PRZYKŁADOWE: Turnieje Tenisowe
+-- Silnik: MariaDB 10.4 / InnoDB  |  Kodowanie: utf8mb4
+--
+-- Zawiera:
+--   2 turnieje: Wimbledon (1 edycja) i Roland Garros (2 edycje)
+--   13 zawodników (część bierze udział w kilku turniejach)
+--   21 meczów ćwierćfinałowych, półfinałowych i finałowych
+--   75 setów ze szczegółowymi wynikami
+--
+-- UWAGA: Skrypt CZYŚCI istniejące rekordy z tabel TURNIEJ, EDYCJA_TURNIEJU,
+-- ZAWODNIK, UDZIAL, MECZ, MECZ_UDZIAL, SET_MECZU, GEM.
+-- Tabele słownikowe (KRAJ, PLEC, STATUS, RODZAJ_MECZU) są zachowane.
+-- =============================================================================
+
+SET NAMES utf8mb4;
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- Czyszczenie danych (odwrotna kolejność kluczy obcych)
+DELETE FROM GEM;
+DELETE FROM SET_MECZU;
+DELETE FROM MECZ_UDZIAL;
+DELETE FROM MECZ;
+DELETE FROM UDZIAL;
+DELETE FROM ZAWODNIK;
+DELETE FROM EDYCJA_TURNIEJU;
+DELETE FROM TURNIEJ;
+
+-- Reset liczników auto_increment
+ALTER TABLE TURNIEJ         AUTO_INCREMENT = 1;
+ALTER TABLE EDYCJA_TURNIEJU AUTO_INCREMENT = 1;
+ALTER TABLE UDZIAL          AUTO_INCREMENT = 1;
+ALTER TABLE MECZ            AUTO_INCREMENT = 1;
+ALTER TABLE SET_MECZU       AUTO_INCREMENT = 1;
+ALTER TABLE GEM             AUTO_INCREMENT = 1;
+
+INSERT IGNORE INTO KRAJ (Kod_ISO, Nazwa, Kontynent) VALUES
+
+-- Europa
+
+('POL', 'Polska', 'Europa'),
+
+('ESP', 'Hiszpania', 'Europa'),
+
+('GBR', 'Wielka Brytania', 'Europa'),
+
+('FRA', 'Francja', 'Europa'),
+
+('GER', 'Niemcy', 'Europa'),
+
+('ITA', 'Włochy', 'Europa'),
+
+('SUI', 'Szwajcaria', 'Europa'),
+
+('SRB', 'Serbia', 'Europa'),
+
+('CZE', 'Czechy', 'Europa'),
+
+('SVK', 'Słowacja', 'Europa'),
+
+('HUN', 'Węgry', 'Europa'),
+
+('AUT', 'Austria', 'Europa'),
+
+('BEL', 'Belgia', 'Europa'),
+
+('NED', 'Holandia', 'Europa'),
+
+('SWE', 'Szwecja', 'Europa'),
+
+('DEN', 'Dania', 'Europa'),
+
+('NOR', 'Norwegia', 'Europa'),
+
+('FIN', 'Finlandia', 'Europa'),
+
+('RUS', 'Rosja', 'Europa'),
+
+('UKR', 'Ukraina', 'Europa'),
+
+('ROU', 'Rumunia', 'Europa'),
+
+('CRO', 'Chorwacja', 'Europa'),
+
+('GRE', 'Grecja', 'Europa'),
+
+('BUL', 'Bułgaria', 'Europa'),
+
+('POR', 'Portugalia', 'Europa'),
+
+-- Ameryka Północna
+
+('USA', 'Stany Zjednoczone', 'Ameryka Północna'),
+
+('CAN', 'Kanada', 'Ameryka Północna'),
+
+('MEX', 'Meksyk', 'Ameryka Północna'),
+
+-- Ameryka Południowa
+
+('ARG', 'Argentyna', 'Ameryka Południowa'),
+
+('BRA', 'Brazylia', 'Ameryka Południowa'),
+
+('COL', 'Kolumbia', 'Ameryka Południowa'),
+
+('CHI', 'Chile', 'Ameryka Południowa'),
+
+-- Azja
+
+('JPN', 'Japonia', 'Azja'),
+
+('CHN', 'Chiny', 'Azja'),
+
+('KOR', 'Korea Południowa', 'Azja'),
+
+('IND', 'Indie', 'Azja'),
+
+('KAZ', 'Kazachstan', 'Azja'),
+
+('THA', 'Tajlandia', 'Azja'),
+
+('TPE', 'Tajwan', 'Azja'),
+
+-- Australia i Oceania
+
+('AUS', 'Australia', 'Australia i Oceania'),
+
+('NZL', 'Nowa Zelandia', 'Australia i Oceania'),
+
+-- Afryka
+
+('RSA', 'Republika Pd. Afryki', 'Afryka'),
+
+('MAR', 'Maroko', 'Afryka'),
+
+('TUN', 'Tunezja', 'Afryka');
+ 
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+-- =============================================================================
+-- TURNIEJE
+-- =============================================================================
+INSERT INTO TURNIEJ (ID_Turnieju, Kod_ISO, Nazwa, Miasto, Nawierzchnia) VALUES
+    (1, 'GBR', 'Wimbledon',     'Londyn', 'Trawa'),
+    (2, 'FRA', 'Roland Garros', 'Paryż',  'Ziemna');
+
+-- =============================================================================
+-- EDYCJE TURNIEJÓW
+--   Wimbledon:     1 edycja  (2023)
+--   Roland Garros: 2 edycje  (2022 i 2023)
+-- =============================================================================
+INSERT INTO EDYCJA_TURNIEJU (ID_Edycji, ID_Turnieju, Rok, Data_rozpoczecia, Data_zakonczenia) VALUES
+    (1, 1, 2023, '2023-07-03', '2023-07-16'),   -- Wimbledon 2023
+    (2, 2, 2022, '2022-05-22', '2022-06-05'),   -- Roland Garros 2022
+    (3, 2, 2023, '2023-05-28', '2023-06-11');   -- Roland Garros 2023
+
+-- =============================================================================
+-- ZAWODNICY
+--   ITF-M-001 Reyes     – dominuje, zwycięzca Wimbledonu i RG 2022
+--   ITF-M-007 Dubois    – triumfator Roland Garros 2023 (wielka niespodzianka)
+--   ITF-M-002 Petrescu  – finał Wimbledonu, regularnie w półfinałach
+--   Reyes, Dubois, Petrescu, Fletcher, Müller, Ferretti, Kowalski
+--     biorą udział w kilku turniejach
+-- =============================================================================
+INSERT INTO ZAWODNIK (Nr_Licencji_ITF, Plec, Kod_ISO, Imie, Nazwisko, Data_urodzenia) VALUES
+    ('ITF-M-001', 'Mężczyzna', 'ESP', 'Carlos',    'Reyes',     '1996-06-15'),
+    ('ITF-M-002', 'Mężczyzna', 'ROU', 'Andrei',    'Petrescu',  '1994-03-22'),
+    ('ITF-M-003', 'Mężczyzna', 'GBR', 'James',     'Fletcher',  '1997-09-10'),
+    ('ITF-M-004', 'Mężczyzna', 'POL', 'Tomasz',    'Kowalski',  '1998-04-05'),
+    ('ITF-M-005', 'Mężczyzna', 'GER', 'Sebastian', 'Müller',    '1993-11-28'),
+    ('ITF-M-006', 'Mężczyzna', 'ITA', 'Luca',      'Ferretti',  '1995-07-14'),
+    ('ITF-M-007', 'Mężczyzna', 'FRA', 'Nicolas',   'Dubois',    '1997-01-30'),
+    ('ITF-M-008', 'Mężczyzna', 'RUS', 'Alexei',    'Volkov',    '1992-08-17'),
+    ('ITF-M-009', 'Mężczyzna', 'ARG', 'Miguel',    'Herrera',   '1996-02-11'),
+    ('ITF-M-010', 'Mężczyzna', 'ARG', 'Diego',     'Alonso',    '1999-05-20'),
+    ('ITF-M-011', 'Mężczyzna', 'FRA', 'Pierre',    'Lefebvre',  '1994-10-03'),
+    ('ITF-M-012', 'Mężczyzna', 'BUL', 'Stefan',    'Popov',     '1995-12-07'),
+    ('ITF-M-013', 'Mężczyzna', 'ITA', 'Marco',     'Rizzi',     '2000-03-16');
+
+-- =============================================================================
+-- UDZIAŁY – zgłoszenia zawodników do edycji turniejów
+--   Rozstawienie: miejsce w drabince (seed), wymagane > 0
+-- =============================================================================
+
+-- Wimbledon 2023 (ID_Edycji = 1)
+INSERT INTO UDZIAL (ID_Udzialu, Nr_Licencji_ITF, ID_Edycji, Status,            Rozstawienie, Ranking_w_momencie_rejestracji, Data_rejestracji) VALUES
+    ( 1, 'ITF-M-001', 1, 'Główna drabinka', 1,  3, '2023-03-15'),  -- Reyes
+    ( 2, 'ITF-M-003', 1, 'Główna drabinka', 2,  8, '2023-03-15'),  -- Fletcher
+    ( 3, 'ITF-M-005', 1, 'Główna drabinka', 3, 12, '2023-03-15'),  -- Müller
+    ( 4, 'ITF-M-002', 1, 'Główna drabinka', 4, 15, '2023-03-15'),  -- Petrescu
+    ( 5, 'ITF-M-004', 1, 'Główna drabinka', 5, 22, '2023-03-15'),  -- Kowalski
+    ( 6, 'ITF-M-007', 1, 'Główna drabinka', 6, 28, '2023-03-15'),  -- Dubois
+    ( 7, 'ITF-M-006', 1, 'Główna drabinka', 7, 31, '2023-03-15'),  -- Ferretti
+    ( 8, 'ITF-M-008', 1, 'Główna drabinka', 8, 35, '2023-03-15');  -- Volkov
+
+-- Roland Garros 2022 (ID_Edycji = 2)
+INSERT INTO UDZIAL (ID_Udzialu, Nr_Licencji_ITF, ID_Edycji, Status,            Rozstawienie, Ranking_w_momencie_rejestracji, Data_rejestracji) VALUES
+    ( 9, 'ITF-M-001', 2, 'Główna drabinka', 1,  3, '2022-04-01'),  -- Reyes
+    (10, 'ITF-M-007', 2, 'Główna drabinka', 2, 10, '2022-04-01'),  -- Dubois
+    (11, 'ITF-M-006', 2, 'Główna drabinka', 3, 18, '2022-04-01'),  -- Ferretti
+    (12, 'ITF-M-009', 2, 'Główna drabinka', 4, 20, '2022-04-01'),  -- Herrera
+    (13, 'ITF-M-010', 2, 'Główna drabinka', 5, 25, '2022-04-01'),  -- Alonso
+    (14, 'ITF-M-011', 2, 'Główna drabinka', 6, 30, '2022-04-01'),  -- Lefebvre
+    (15, 'ITF-M-002', 2, 'Główna drabinka', 7, 16, '2022-04-01'),  -- Petrescu
+    (16, 'ITF-M-012', 2, 'Dzika karta',     8, 40, '2022-04-01');  -- Popov (dzika karta)
+
+-- Roland Garros 2023 (ID_Edycji = 3)
+INSERT INTO UDZIAL (ID_Udzialu, Nr_Licencji_ITF, ID_Edycji, Status,            Rozstawienie, Ranking_w_momencie_rejestracji, Data_rejestracji) VALUES
+    (17, 'ITF-M-001', 3, 'Główna drabinka', 1,  2, '2023-04-01'),  -- Reyes
+    (18, 'ITF-M-007', 3, 'Główna drabinka', 2,  9, '2023-04-01'),  -- Dubois
+    (19, 'ITF-M-002', 3, 'Główna drabinka', 3, 14, '2023-04-01'),  -- Petrescu
+    (20, 'ITF-M-003', 3, 'Główna drabinka', 4,  7, '2023-04-01'),  -- Fletcher
+    (21, 'ITF-M-006', 3, 'Główna drabinka', 5, 17, '2023-04-01'),  -- Ferretti
+    (22, 'ITF-M-005', 3, 'Główna drabinka', 6, 11, '2023-04-01'),  -- Müller
+    (23, 'ITF-M-004', 3, 'Główna drabinka', 7, 21, '2023-04-01'),  -- Kowalski
+    (24, 'ITF-M-013', 3, 'Dzika karta',     8, 45, '2023-04-01');  -- Rizzi (dzika karta)
+
+-- =============================================================================
+-- MECZE – 21 meczów, wszystkie to Singiel BO5 (ID_Rodzaju = 2)
+--   Strona A = wyżej rozstawiony / inicjator
+--   `Zwycięska_strona` = 'A' lub 'B'
+-- =============================================================================
+
+-- ── Wimbledon 2023 ───────────────────────────────────────────────────────────
+INSERT INTO MECZ (ID_Meczu, ID_Edycji, ID_Rodzaju, Runda,          Data,         Kort,             Czas_trwania_min, `Zwycięska_strona`) VALUES
+    ( 1, 1, 2, 'Ćwierćfinał', '2023-07-11', 'Centre Court',   115, 'A'),  -- Reyes     vs Volkov    → Reyes
+    ( 2, 1, 2, 'Ćwierćfinał', '2023-07-11', 'Court 1',         85, 'A'),  -- Fletcher  vs Ferretti  → Fletcher
+    ( 3, 1, 2, 'Ćwierćfinał', '2023-07-11', 'Court 2',        150, 'A'),  -- Müller    vs Dubois    → Müller
+    ( 4, 1, 2, 'Ćwierćfinał', '2023-07-11', 'Court 3',         90, 'A'),  -- Petrescu  vs Kowalski  → Petrescu
+    ( 5, 1, 2, 'Półfinał',    '2023-07-14', 'Centre Court',   145, 'A'),  -- Reyes     vs Fletcher  → Reyes
+    ( 6, 1, 2, 'Półfinał',    '2023-07-14', 'Court 1',        210, 'B'),  -- Müller    vs Petrescu  → Petrescu (5 setów!)
+    ( 7, 1, 2, 'Finał',       '2023-07-16', 'Centre Court',   105, 'A'); -- Reyes     vs Petrescu  → Reyes 🏆
+
+-- ── Roland Garros 2022 ───────────────────────────────────────────────────────
+INSERT INTO MECZ (ID_Meczu, ID_Edycji, ID_Rodzaju, Runda,          Data,         Kort,                          Czas_trwania_min, `Zwycięska_strona`) VALUES
+    ( 8, 2, 2, 'Ćwierćfinał', '2022-06-01', 'Court Philippe-Chatrier',   72, 'A'),  -- Reyes    vs Popov    → Reyes
+    ( 9, 2, 2, 'Ćwierćfinał', '2022-06-01', 'Court Suzanne-Lenglen',    155, 'A'),  -- Dubois   vs Petrescu → Dubois
+    (10, 2, 2, 'Ćwierćfinał', '2022-06-01', 'Court Simonne-Mathieu',     88, 'A'),  -- Ferretti vs Lefebvre → Ferretti
+    (11, 2, 2, 'Ćwierćfinał', '2022-06-01', 'Court Philippe-Chatrier',  140, 'A'),  -- Herrera  vs Alonso   → Herrera
+    (12, 2, 2, 'Półfinał',    '2022-06-03', 'Court Philippe-Chatrier',   95, 'A'),  -- Reyes    vs Dubois   → Reyes
+    (13, 2, 2, 'Półfinał',    '2022-06-03', 'Court Suzanne-Lenglen',    138, 'B'),  -- Ferretti vs Herrera  → Herrera
+    (14, 2, 2, 'Finał',       '2022-06-05', 'Court Philippe-Chatrier',  143, 'A'); -- Reyes    vs Herrera  → Reyes 🏆
+
+-- ── Roland Garros 2023 ───────────────────────────────────────────────────────
+INSERT INTO MECZ (ID_Meczu, ID_Edycji, ID_Rodzaju, Runda,          Data,         Kort,                          Czas_trwania_min, `Zwycięska_strona`) VALUES
+    (15, 3, 2, 'Ćwierćfinał', '2023-06-06', 'Court Philippe-Chatrier',   68, 'A'),  -- Reyes    vs Rizzi    → Reyes
+    (16, 3, 2, 'Ćwierćfinał', '2023-06-06', 'Court Suzanne-Lenglen',     92, 'A'),  -- Dubois   vs Müller   → Dubois
+    (17, 3, 2, 'Ćwierćfinał', '2023-06-06', 'Court Simonne-Mathieu',     88, 'A'),  -- Petrescu vs Kowalski → Petrescu
+    (18, 3, 2, 'Ćwierćfinał', '2023-06-06', 'Court Suzanne-Lenglen',    155, 'A'),  -- Fletcher vs Ferretti → Fletcher
+    (19, 3, 2, 'Półfinał',    '2023-06-08', 'Court Philippe-Chatrier',  218, 'B'),  -- Reyes    vs Dubois   → Dubois (NIESPODZIANKA! 5 setów)
+    (20, 3, 2, 'Półfinał',    '2023-06-08', 'Court Suzanne-Lenglen',     84, 'A'),  -- Petrescu vs Fletcher → Petrescu
+    (21, 3, 2, 'Finał',       '2023-06-11', 'Court Philippe-Chatrier',  152, 'A'); -- Dubois   vs Petrescu → Dubois 🏆
+
+-- =============================================================================
+-- MECZ_UDZIAL – przypisanie zawodników do stron meczu
+-- =============================================================================
+
+-- Wimbledon 2023
+INSERT INTO MECZ_UDZIAL (ID_Meczu, ID_Udzialu, Strona) VALUES
+    ( 1,  1, 'A'), ( 1,  8, 'B'),   -- Reyes [1]    vs Volkov [8]
+    ( 2,  2, 'A'), ( 2,  7, 'B'),   -- Fletcher [2] vs Ferretti [7]
+    ( 3,  3, 'A'), ( 3,  6, 'B'),   -- Müller [3]   vs Dubois [6]
+    ( 4,  4, 'A'), ( 4,  5, 'B'),   -- Petrescu [4] vs Kowalski [5]
+    ( 5,  1, 'A'), ( 5,  2, 'B'),   -- Reyes [1]    vs Fletcher [2]
+    ( 6,  3, 'A'), ( 6,  4, 'B'),   -- Müller [3]   vs Petrescu [4]
+    ( 7,  1, 'A'), ( 7,  4, 'B');   -- Reyes [1]    vs Petrescu [4]  ← FINAŁ
+
+-- Roland Garros 2022
+INSERT INTO MECZ_UDZIAL (ID_Meczu, ID_Udzialu, Strona) VALUES
+    ( 8,  9, 'A'), ( 8, 16, 'B'),   -- Reyes [1]    vs Popov [8]
+    ( 9, 10, 'A'), ( 9, 15, 'B'),   -- Dubois [2]   vs Petrescu [7]
+    (10, 11, 'A'), (10, 14, 'B'),   -- Ferretti [3] vs Lefebvre [6]
+    (11, 12, 'A'), (11, 13, 'B'),   -- Herrera [4]  vs Alonso [5]
+    (12,  9, 'A'), (12, 10, 'B'),   -- Reyes [1]    vs Dubois [2]
+    (13, 11, 'A'), (13, 12, 'B'),   -- Ferretti [3] vs Herrera [4]
+    (14,  9, 'A'), (14, 12, 'B');   -- Reyes [1]    vs Herrera [4]   ← FINAŁ
+
+-- Roland Garros 2023
+INSERT INTO MECZ_UDZIAL (ID_Meczu, ID_Udzialu, Strona) VALUES
+    (15, 17, 'A'), (15, 24, 'B'),   -- Reyes [1]    vs Rizzi [8]
+    (16, 18, 'A'), (16, 22, 'B'),   -- Dubois [2]   vs Müller [6]
+    (17, 19, 'A'), (17, 23, 'B'),   -- Petrescu [3] vs Kowalski [7]
+    (18, 20, 'A'), (18, 21, 'B'),   -- Fletcher [4] vs Ferretti [5]
+    (19, 17, 'A'), (19, 18, 'B'),   -- Reyes [1]    vs Dubois [2]
+    (20, 19, 'A'), (20, 20, 'B'),   -- Petrescu [3] vs Fletcher [4]
+    (21, 18, 'A'), (21, 19, 'B');   -- Dubois [2]   vs Petrescu [3]  ← FINAŁ
+
+-- =============================================================================
+-- SETY MECZÓW – wyniki gemowe każdego seta
+--   Wynik_A / Wynik_B = liczba wygranych gemów w secie
+--   Tie_break = 1 jeśli set rozstrzygnął tie-break
+-- =============================================================================
+
+-- ── Wimbledon 2023 ───────────────────────────────────────────────────────────
+
+-- MECZ 1: Reyes bt Volkov  6-3  7-6(4)  6-2
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    ( 1, 1, 1, 6, 3, 0),
+    ( 2, 1, 2, 7, 6, 1),
+    ( 3, 1, 3, 6, 2, 0);
+
+-- MECZ 2: Fletcher bt Ferretti  6-4  6-1  6-3
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    ( 4, 2, 1, 6, 4, 0),
+    ( 5, 2, 2, 6, 1, 0),
+    ( 6, 2, 3, 6, 3, 0);
+
+-- MECZ 3: Müller bt Dubois  7-5  6-4  6-7(5)  7-6(3)
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    ( 7, 3, 1, 7, 5, 0),
+    ( 8, 3, 2, 6, 4, 0),
+    ( 9, 3, 3, 6, 7, 1),  -- Dubois wygrywa ten set
+    (10, 3, 4, 7, 6, 1);
+
+-- MECZ 4: Petrescu bt Kowalski  6-2  6-4  6-3
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    (11, 4, 1, 6, 2, 0),
+    (12, 4, 2, 6, 4, 0),
+    (13, 4, 3, 6, 3, 0);
+
+-- MECZ 5: Reyes bt Fletcher  6-4  6-7(2)  7-5  6-3
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    (14, 5, 1, 6, 4, 0),
+    (15, 5, 2, 6, 7, 1),  -- Fletcher wygrywa ten set
+    (16, 5, 3, 7, 5, 0),
+    (17, 5, 4, 6, 3, 0);
+
+-- MECZ 6: Petrescu bt Müller  6-4  6-7(5)  4-6  7-5  7-5   (5 setów!)
+--   Uwaga: strona A = Müller, B = Petrescu; B wygrywa
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    (18, 6, 1, 4, 6, 0),   -- Petrescu wygrywa
+    (19, 6, 2, 7, 6, 1),   -- Müller wygrywa (tie-break)
+    (20, 6, 3, 6, 4, 0),   -- Müller wygrywa
+    (21, 6, 4, 5, 7, 0),   -- Petrescu wygrywa
+    (22, 6, 5, 5, 7, 0);   -- Petrescu wygrywa (decydujący 5. set!)
+
+-- MECZ 7 (FINAŁ Wimbledon 2023): Reyes bt Petrescu  7-6(4)  6-3  6-4
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    (23, 7, 1, 7, 6, 1),
+    (24, 7, 2, 6, 3, 0),
+    (25, 7, 3, 6, 4, 0);
+
+-- ── Roland Garros 2022 ───────────────────────────────────────────────────────
+
+-- MECZ 8: Reyes bt Popov  6-1  6-3  6-2
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    (26, 8, 1, 6, 1, 0),
+    (27, 8, 2, 6, 3, 0),
+    (28, 8, 3, 6, 2, 0);
+
+-- MECZ 9: Dubois bt Petrescu  6-4  6-3  6-7(5)  7-6(3)
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    (29, 9, 1, 6, 4, 0),
+    (30, 9, 2, 6, 3, 0),
+    (31, 9, 3, 6, 7, 1),   -- Petrescu wygrywa ten set
+    (32, 9, 4, 7, 6, 1);
+
+-- MECZ 10: Ferretti bt Lefebvre  7-5  6-4  6-2
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    (33, 10, 1, 7, 5, 0),
+    (34, 10, 2, 6, 4, 0),
+    (35, 10, 3, 6, 2, 0);
+
+-- MECZ 11: Herrera bt Alonso  4-6  6-3  6-4  7-5
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    (36, 11, 1, 4, 6, 0),   -- Alonso wygrywa ten set
+    (37, 11, 2, 6, 3, 0),
+    (38, 11, 3, 6, 4, 0),
+    (39, 11, 4, 7, 5, 0);
+
+-- MECZ 12: Reyes bt Dubois  6-2  6-4  7-6(3)
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    (40, 12, 1, 6, 2, 0),
+    (41, 12, 2, 6, 4, 0),
+    (42, 12, 3, 7, 6, 1);
+
+-- MECZ 13: Herrera bt Ferretti  3-6  6-4  6-3  6-2
+--   Uwaga: strona A = Ferretti, B = Herrera; B wygrywa
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    (43, 13, 1, 6, 3, 0),   -- Ferretti wygrywa ten set
+    (44, 13, 2, 4, 6, 0),   -- Herrera wygrywa
+    (45, 13, 3, 3, 6, 0),   -- Herrera wygrywa
+    (46, 13, 4, 2, 6, 0);   -- Herrera wygrywa
+
+-- MECZ 14 (FINAŁ Roland Garros 2022): Reyes bt Herrera  6-4  7-5  4-6  6-3
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    (47, 14, 1, 6, 4, 0),
+    (48, 14, 2, 7, 5, 0),
+    (49, 14, 3, 4, 6, 0),   -- Herrera wygrywa ten set
+    (50, 14, 4, 6, 3, 0);
+
+-- ── Roland Garros 2023 ───────────────────────────────────────────────────────
+
+-- MECZ 15: Reyes bt Rizzi  6-3  6-2  6-1
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    (51, 15, 1, 6, 3, 0),
+    (52, 15, 2, 6, 2, 0),
+    (53, 15, 3, 6, 1, 0);
+
+-- MECZ 16: Dubois bt Müller  6-3  7-5  6-4
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    (54, 16, 1, 6, 3, 0),
+    (55, 16, 2, 7, 5, 0),
+    (56, 16, 3, 6, 4, 0);
+
+-- MECZ 17: Petrescu bt Kowalski  7-5  6-3  6-4
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    (57, 17, 1, 7, 5, 0),
+    (58, 17, 2, 6, 3, 0),
+    (59, 17, 3, 6, 4, 0);
+
+-- MECZ 18: Fletcher bt Ferretti  6-4  3-6  7-6(5)  6-3
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    (60, 18, 1, 6, 4, 0),
+    (61, 18, 2, 3, 6, 0),   -- Ferretti wygrywa ten set
+    (62, 18, 3, 7, 6, 1),
+    (63, 18, 4, 6, 3, 0);
+
+-- MECZ 19: Dubois bt Reyes  6-3  4-6  3-6  6-4  7-5   (WIELKA NIESPODZIANKA! 5 setów!)
+--   Uwaga: strona A = Reyes, B = Dubois; B wygrywa
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    (64, 19, 1, 3, 6, 0),   -- Dubois wygrywa
+    (65, 19, 2, 6, 4, 0),   -- Reyes wygrywa
+    (66, 19, 3, 6, 3, 0),   -- Reyes wygrywa (Reyes prowadzi 2-1!)
+    (67, 19, 4, 4, 6, 0),   -- Dubois wygrywa (wyrównuje 2-2)
+    (68, 19, 5, 5, 7, 0);   -- Dubois wygrywa decydujący set!
+
+-- MECZ 20: Petrescu bt Fletcher  6-4  6-2  7-5
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    (69, 20, 1, 6, 4, 0),
+    (70, 20, 2, 6, 2, 0),
+    (71, 20, 3, 7, 5, 0);
+
+-- MECZ 21 (FINAŁ Roland Garros 2023): Dubois bt Petrescu  6-3  3-6  7-6(4)  6-4
+INSERT INTO SET_MECZU (ID_Setu, ID_Meczu, Numer_setu, Wynik_A, Wynik_B, Tie_break) VALUES
+    (72, 21, 1, 6, 3, 0),
+    (73, 21, 2, 3, 6, 0),   -- Petrescu wygrywa ten set
+    (74, 21, 3, 7, 6, 1),
+    (75, 21, 4, 6, 4, 0);
