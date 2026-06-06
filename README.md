@@ -4,12 +4,12 @@ Aplikacja webowa do zarządzania turniejami tenisowymi — edycje roczne, drabin
 
 ## Stack technologiczny
 
-| Warstwa | Technologia |
-|---|---|
-| Backend | Laravel 13 (PHP 8.3) |
-| Widoki | Blade + Tailwind CSS (CDN) |
-| Baza danych | MariaDB 10.4 / InnoDB |
-| Lokalne środowisko | XAMPP + phpMyAdmin |
+| Warstwa            | Technologia                |
+| ------------------ | -------------------------- |
+| Backend            | Laravel 13 (PHP 8.3)       |
+| Widoki             | Blade + Tailwind CSS (CDN) |
+| Baza danych        | MariaDB 10.4 / InnoDB      |
+| Lokalne środowisko | XAMPP + phpMyAdmin         |
 
 ## Struktura repozytorium
 
@@ -36,13 +36,13 @@ example-queries/
 
 ## Wymagania
 
-| Narzędzie | Minimalna wersja |
-|---|---|
-| PHP | 8.3 |
-| Composer | 2.x |
-| Node.js | 18.x |
-| MariaDB / MySQL | 10.4 / 8.0 |
-| XAMPP (opcjonalnie) | 8.2+ |
+| Narzędzie           | Minimalna wersja |
+| ------------------- | ---------------- |
+| PHP                 | 8.3              |
+| Composer            | 2.x              |
+| Node.js             | 18.x             |
+| MariaDB / MySQL     | 10.4 / 8.0       |
+| XAMPP (opcjonalnie) | 8.2+             |
 
 Sprawdź wersje przed startem:
 
@@ -95,6 +95,7 @@ Następnie:
 composer install
 php artisan key:generate
 php artisan db:seed          # ładuje KrajSeeder
+php artisan migrate
 npm install
 npm run build
 php artisan serve
@@ -129,15 +130,15 @@ Szczegółowy opis wyborów implementacyjnych: [`sql/turnieje_tenisa_dokumentacj
 
 Skrypt `sql/turnieje_tenisa_triggery.sql` definiuje 9 triggerów w 6 grupach:
 
-| Trigger | Tabela | Reguła |
-|---|---|---|
-| TRG_EDYCJA_INSERT/UPDATE_DATA_ROK | EDYCJA_TURNIEJU | Rok musi zgadzać się z rokiem Data_rozpoczecia |
-| TRG_MECZ_INSERT/UPDATE_DATA | MECZ | Data meczu w przedziale edycji |
-| TRG_MECZ_UDZIAL_INSERT_STRONA | MECZ_UDZIAL | Maksymalnie 2 strony (A i B) |
-| TRG_MECZ_UDZIAL_INSERT_LICZBA | MECZ_UDZIAL | Liczba zawodników zgodna z rodzajem meczu |
-| TRG_UDZIAL_INSERT/UPDATE_WIEK | UDZIAL | Data rejestracji nie wcześniej niż urodziny |
-| TRG_UDZIAL_INSERT/UPDATE_EDYCJA | UDZIAL | Data rejestracji nie po zakończeniu edycji |
-| TRG_ZAWODNIK_INSERT/UPDATE_URODZINY | ZAWODNIK | Data urodzenia nie w przyszłości |
+| Trigger                             | Tabela          | Reguła                                         |
+| ----------------------------------- | --------------- | ---------------------------------------------- |
+| TRG_EDYCJA_INSERT/UPDATE_DATA_ROK   | EDYCJA_TURNIEJU | Rok musi zgadzać się z rokiem Data_rozpoczecia |
+| TRG_MECZ_INSERT/UPDATE_DATA         | MECZ            | Data meczu w przedziale edycji                 |
+| TRG_MECZ_UDZIAL_INSERT_STRONA       | MECZ_UDZIAL     | Maksymalnie 2 strony (A i B)                   |
+| TRG_MECZ_UDZIAL_INSERT_LICZBA       | MECZ_UDZIAL     | Liczba zawodników zgodna z rodzajem meczu      |
+| TRG_UDZIAL_INSERT/UPDATE_WIEK       | UDZIAL          | Data rejestracji nie wcześniej niż urodziny    |
+| TRG_UDZIAL_INSERT/UPDATE_EDYCJA     | UDZIAL          | Data rejestracji nie po zakończeniu edycji     |
+| TRG_ZAWODNIK_INSERT/UPDATE_URODZINY | ZAWODNIK        | Data urodzenia nie w przyszłości               |
 
 Zapytania testujące triggery: [`example-queries/example-trigger-violations.md`](example-queries/example-trigger-violations.md)
 
@@ -155,9 +156,9 @@ Nie zaimplementowano: edycji i usuwania istniejących rekordów, formularzy gem�
 
 ## Podział prac
 
-| Osoba | Zakres |
-|---|---|
-| Jakub Tkaczyk | Modele Eloquent, seedery |
-| Adrian Stuglik | Kontrolery, routing, walidacja |
-| Laura Wrońska | Widoki turniejów i edycji, layout |
+| Osoba           | Zakres                                    |
+| --------------- | ----------------------------------------- |
+| Jakub Tkaczyk   | Modele Eloquent, seedery                  |
+| Adrian Stuglik  | Kontrolery, routing, walidacja            |
+| Laura Wrońska   | Widoki turniejów i edycji, layout         |
 | Natalia Topinek | Widoki zawodników i meczów, dane demo SQL |
